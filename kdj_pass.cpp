@@ -19,95 +19,133 @@ using namespace std;
 
 namespace{
 
-
-
     struct KDJPass:public ModulePass{
-
-
 
         static char ID;
         KDJPass():ModulePass(ID){}
 
+        string v2String(Value *value){
+            string str;
+            llvm::raw_string_ostream rso(str);
+            value->print(rso);
+
+            return str;
+        }
+
+        string i2String(Instruction *inst){
+            string str;
+            llvm::raw_string_ostream rso(str);
+            inst->print(rso);
+
+            return str;
+        }
+        
+        vector<string> split(string str){
+            vector <string> v;
+            stringstream ss(str);
+            string tmp;
+            while (ss>>tmp) v.push_back(tmp);
+            return v;
+        }
+
         bool runOnModule(Module &M) override{
 
+            vector<string> Trace;
             unordered_set<string> blacklisted_functions={"gets","__isoc99_scanf","strcpy","sprintf"};
+            unsigned int size;
+            unsigned int buf_len;
+            
+
             for (Function &F : M) {
                 auto *DL=&F.getParent()->getDataLayout();
                 for(BasicBlock &BB : F){
-                    for(Instruction &I : BB){
-                        if(isa<AllocaInst>(I)){ //create node
-                            //errs()<<I<<"\n";
+                    for(Instruction &I : reverse(BB)){
+                        if(isa<GetElementPtrInst>(I)){ //create node
+                            // errs()<<I<<"\n";
+                            string str=i2String(&I);
+                            str=regex_replace(str,regex("[\\[\\],]"),"");
+                            vector <string> v= split(str);
+                            string addr = v[0];
+                            string ssize=v[4];
+                            buf_len=stoi(ssize);
+                            // cout<<addr<<"\n";
+
+                            auto it = find(Trace.begin(),Trace.end(),addr);
+                            if (it==Trace.end()){
+
+                            }else{ //check overflow
+                                cout<<"Buf Size: "<<buf_len<<"\n";
+                                cout<<"Read Size: "<<size<<"\n";
+                                if (size>buf_len){
+                                    cout<<"[*]BOF DETECTED!!"<<"\n";
+                                }
+                            }
                         }
                         else if (isa<LoadInst>(I)){ //connect nodd
-                            string str;
-                            
-                            llvm::raw_string_ostream rso(str);
-                            I.print(rso);
+                            string str=i2String(&I);
+                            // errs()<<I<<"\n";
 
                             str=regex_replace(str,regex("[,]"),"");
-                            vector <string> v;
-                            stringstream ss(str);
-                            string tmp;
-                            while (ss>>tmp) v.push_back(tmp);
+                            vector <string> v=split(str);
 
-                            cout<<"load "<<v[0] <<" "<<v[5] <<"\n";
+                            string dest=v[0];
+                            string src=v[5];
 
-                        }
-                        else if (isa<StoreInst>(I)){ //connect node
-                            //errs()<<I<<"\n";
-                            string str;
-                            
-                            llvm::raw_string_ostream rso(str);
-                            I.print(rso);
-                            //errs()<<str<<"\n";
+                            auto it = find(Trace.begin(),Trace.end(),dest);
+                            if (it==Trace.end()){
 
-                            str=regex_replace(str,regex("[,]"),"");
-                            vector<string> v;
-                            stringstream ss(str);
-                            string tmp;
-                            while(ss>>tmp) v.push_back(tmp);
-                            
-
-                            cout<<"store "<<v[2]<<" "<<v[4]<<"\n";
-
-                        }
-                        else if (isa<GetElementPtrInst>(I))
-                            errs()<<I<<"\n";
-                    }
-                }
-
-                if(F.isDeclaration()){
-                    //errs() << "Library Function Name: "<<F.getName()<<"\n";
-                    if (blacklisted_functions.count(F.getName().str())){
-                        errs() << F.getName() <<" is Vulnerable Function\n";
-                    }
-                        
-                    if (F.getName().str()=="read"){
-                        for(auto &use : F.uses()){
-                            auto *userInst=use.getUser();
-                            errs()<<*userInst<<"\n";
-                            Value *buf=userInst->getOperand(1);
-                            ConstantExpr *pCE = cast<ConstantExpr>(buf);
-                            Value *firstop = pCE->getOperand(0);
-                            auto *inst=cast<AllocaInst>(firstop);
-                            uint64_t bufSize = DL->getTypeAllocSize(inst->getAllocatedType());
-
-                            Value *sizeArg=userInst->getOperand(2);
-                            // sizeArg->dump();
-                            ConstantInt *CI = cast<ConstantInt>(sizeArg);
-                            uint64_t readSize=CI->getSExtValue();
-
-                            if (bufSize<readSize){
-                                errs()<<"read(fd, buffer["<<bufSize<<"], "<<readSize<<")\n";
-                                errs()<<"Buffer Overflow Detected\n";
                             }
                             else{
-                                errs()<<"read(fd, buffer["<<bufSize<<"], "<<readSize<<")\n";
+                                Trace.push_back(src);
                             }
                         }
-                    }  
+                        else if (isa<StoreInst>(I)){ //connect node
+                            // errs()<<I<<"\n";
+                            string str=i2String(&I);
+
+                            str=regex_replace(str,regex("[,]"),"");
+                            vector<string> v=split(str);
+                            
+                            string dest=v[4];
+                            string src=v[2];
+
+                            auto it = find(Trace.begin(),Trace.end(),dest);
+                            if (it==Trace.end()){
+
+                            }
+                            else{
+                                Trace.push_back(src);
+                                // cout<<"store "<<src<<" "<<dest<<"\n";
+                            }
+                        }
+                        else if (isa<CallInst>(I)){
+                            // errs()<<I<<"\n";
+                            if (CallInst *CI = dyn_cast<CallInst>(&I)){
+
+                                Function *calledFunction=CI->getCalledFunction();
+                                if (calledFunction->getName().str()=="read"){
+
+                                    Value *buf = CI->getArgOperand(1);
+                                    // errs()<<*buf<<"\n";
+                                    string str=v2String(buf);
+                                    vector<string> v=split(str);
+                                    string buf_name=v[0];
+                                    // errs()<<"buf_name: "<<buf_name<<"\n";
+                                    Trace.push_back(buf_name);
+
+                                    Value *sizeArg=CI->getArgOperand(2);
+                                    ConstantInt *CInt = cast<ConstantInt>(sizeArg);
+                                    size=CInt->getSExtValue();
+                                    // errs()<<buf_len<<"\n";
+                                }
+                            }
+                            
+                        }
+                    }
                 }
             }
+
+            
             return false;
         }
     };
