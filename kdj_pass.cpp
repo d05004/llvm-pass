@@ -69,7 +69,6 @@ namespace{
                             string ssize=v[4];
                             buf_len=stoi(ssize);
                             // cout<<addr<<"\n";
-
                             auto it = find(Trace.begin(),Trace.end(),addr);
                             if (it==Trace.end()){
 
@@ -77,7 +76,7 @@ namespace{
                                 cout<<"Buf Size: "<<buf_len<<"\n";
                                 cout<<"Read Size: "<<size<<"\n";
                                 if (size>buf_len){
-                                    cout<<"[*]BOF DETECTED!!"<<"\n";
+                                    cout<<"[*]BOF DETECTED!"<<"\n";
                                 }
                             }
                         }
