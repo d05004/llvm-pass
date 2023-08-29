@@ -17,6 +17,13 @@
 using namespace llvm;
 using namespace std;
 
+struct Node{
+    vector<string> Trace_buf;
+    vector<string> Trace_count;
+    size_t buf_len;
+    size_t count_len;
+};
+
 namespace{
 
     struct KDJPass:public ModulePass{
@@ -50,14 +57,12 @@ namespace{
 
         bool runOnModule(Module &M) override{
 
-            vector<string> Trace;
+            vector<Node> master;
+            vector<Node>::iterator it;
+            vector<string>::iterator it2;
             unordered_set<string> blacklisted_functions={"gets","__isoc99_scanf","strcpy","sprintf"};
-            unsigned int size;
-            unsigned int buf_len;
             
-
             for (Function &F : M) {
-                auto *DL=&F.getParent()->getDataLayout();
                 for(BasicBlock &BB : F){
                     for(Instruction &I : reverse(BB)){
                         if(isa<GetElementPtrInst>(I)){ //create node
@@ -67,19 +72,21 @@ namespace{
                             vector <string> v= split(str);
                             string addr = v[0];
                             string ssize=v[4];
-                            buf_len=stoi(ssize);
+                            size_t buf_len=stoi(ssize);
                             // cout<<addr<<"\n";
 
-                            auto it = find(Trace.begin(),Trace.end(),addr);
-                            if (it==Trace.end()){
-
-                            }else{ //check overflow
-                                cout<<"Buf Size: "<<buf_len<<"\n";
-                                cout<<"Read Size: "<<size<<"\n";
-                                if (size>buf_len){
-                                    cout<<"[*]BOF DETECTED!!"<<"\n";
+                            for(it=master.begin();it!=master.end();it++){
+                                auto check=find(it->Trace_buf.begin(),it->Trace_buf.end(),addr);
+                                if (check!=it->Trace_buf.end()){
+                                    it->buf_len=buf_len;
                                 }
                             }
+                            // auto it = find(Trace_buf.begin(),Trace_buf.end(),addr);
+                            // if (it==Trace_buf.end()){
+
+                            // }else{ //check overflow
+                            //     cout<<"Buf Size: "<<buf_len<<"\n";
+                            // }
                         }
                         else if (isa<LoadInst>(I)){ //connect nodd
                             string str=i2String(&I);
@@ -91,16 +98,36 @@ namespace{
                             string dest=v[0];
                             string src=v[5];
 
-                            auto it = find(Trace.begin(),Trace.end(),dest);
-                            if (it==Trace.end()){
+                            for(it=master.begin();it!=master.end();it++){
+                                auto check=find(it->Trace_buf.begin(),it->Trace_buf.end(),dest);
+                                if (check!=it->Trace_buf.end()){
+                                    it->Trace_buf.push_back(src);
+                                }
+                            }
 
+                            // auto it = find(Trace_buf.begin(),Trace_buf.end(),dest);
+                            // if (it==Trace_buf.end()){
+
+                            // }
+                            // else{
+                            //     Trace_buf.push_back(src);
+                            // }
+
+                            for(it=master.begin();it!=master.end();it++){
+                                auto check=find(it->Trace_count.begin(),it->Trace_count.end(),dest);
+                                if (check!=it->Trace_count.end()){
+                                    it->Trace_count.push_back(src);
+                                }
                             }
-                            else{
-                                Trace.push_back(src);
-                            }
+                            // auto it2 = find(Trace_data.begin(),Trace_data.end(),dest);
+                            // if(it2==Trace_data.end()){
+
+                            // }else{
+                            //     Trace_data.push_back(src);
+                            // }
                         }
                         else if (isa<StoreInst>(I)){ //connect node
-                            // errs()<<I<<"\n";
+                            Value *val=I.getOperand(0);
                             string str=i2String(&I);
 
                             str=regex_replace(str,regex("[,]"),"");
@@ -109,14 +136,40 @@ namespace{
                             string dest=v[4];
                             string src=v[2];
 
-                            auto it = find(Trace.begin(),Trace.end(),dest);
-                            if (it==Trace.end()){
+                            for(it=master.begin();it!=master.end();it++){
+                                auto check=find(it->Trace_buf.begin(),it->Trace_buf.end(),dest);
+                                if (check!=it->Trace_buf.end()){
+                                    it->Trace_buf.push_back(src);
+                                }
+                            }
+                            // auto it = find(Trace_buf.begin(),Trace_buf.end(),dest);
+                            // if (it==Trace_buf.end()){
 
+                            // }
+                            // else{
+                            //     Trace_buf.push_back(src);
+                            // }
+
+                            for(it=master.begin();it!=master.end();it++){
+                                auto check=find(it->Trace_count.begin(),it->Trace_count.end(),dest);
+                                if (check!=it->Trace_count.end()){
+                                    if (ConstantInt *CInt=dyn_cast<ConstantInt>(val)){
+                                        it->count_len=CInt->getSExtValue();
+                                    }else{
+                                        it->Trace_count.push_back(src);
+                                    }
+                                }
                             }
-                            else{
-                                Trace.push_back(src);
-                                // cout<<"store "<<src<<" "<<dest<<"\n";
-                            }
+                            // auto it2= find(Trace_data.begin(),Trace_data.end(),dest);
+                            // if (it2==Trace_data.end()){
+                            // }else{
+                            //     if (ConstantInt *CInt=dyn_cast<ConstantInt>(val)){
+                            //         size=CInt->getSExtValue();
+                            //         errs()<<"Read Size: "<<size<<"\n";
+                            //     }else{
+                            //         Trace_data.push_back(src);
+                            //     }
+                            // }
                         }
                         else if (isa<CallInst>(I)){
                             // errs()<<I<<"\n";
@@ -124,6 +177,10 @@ namespace{
 
                                 Function *calledFunction=CI->getCalledFunction();
                                 if (calledFunction->getName().str()=="read"){
+                                    // call devel's function
+                                    // IRBuilder<> IRB;
+                                    // IRB.createCall();
+                                    
 
                                     Value *buf = CI->getArgOperand(1);
                                     // errs()<<*buf<<"\n";
@@ -131,12 +188,23 @@ namespace{
                                     vector<string> v=split(str);
                                     string buf_name=v[0];
                                     // errs()<<"buf_name: "<<buf_name<<"\n";
-                                    Trace.push_back(buf_name);
 
+                                    Node n;
+                                    n.Trace_buf.push_back(buf_name);
+                                    
                                     Value *sizeArg=CI->getArgOperand(2);
-                                    ConstantInt *CInt = cast<ConstantInt>(sizeArg);
-                                    size=CInt->getSExtValue();
-                                    // errs()<<buf_len<<"\n";
+                                    if (ConstantInt *CInt=dyn_cast<ConstantInt>(sizeArg)){
+                                        size_t size=CInt->getSExtValue();
+                                        // errs()<<"Read Size: "<<size<<"\n";
+                                        n.count_len=size;
+                                    }else{
+                                        Value *op = CI->getOperand(2);
+                                        string str = v2String(op);
+                                        vector<string> v=split(str);
+                                        string count_name=v[4];
+                                        n.Trace_count.push_back(count_name);
+                                    }
+                                    master.push_back(n);
                                 }
                             }
                             
@@ -145,6 +213,27 @@ namespace{
                 }
             }
 
+
+            //dump master
+            
+            for(it=master.begin();it!=master.end();it++){
+                // cout<<"Trace Buf"<<"\n";
+                // for(it2=it->Trace_buf.begin();it2!=it->Trace_buf.end();it2++){
+                //     cout<<*it2<<" ";
+                // }
+                // cout<<endl;
+                // cout<<"Trace Count"<<"\n";
+                // for(it2=it->Trace_count.begin();it2!=it->Trace_count.end();it2++){
+                //     cout<<*it2<<" ";
+                // }
+                // cout<<endl;
+                if (it->buf_len<it->count_len){
+                    cout<<"[*] Stack Buffer Overflow Detect!!!\n";
+                    cout<<"Read "<<it->count_len<<" bytes in "<<it->buf_len<<"-byte buffer"<<"\n";
+                }
+                // cout<<"Buf Length: "<<it->buf_len<<"\n";
+                // cout<<"Count Length: "<<it->count_len<<"\n";
+            }
             
             return false;
         }
